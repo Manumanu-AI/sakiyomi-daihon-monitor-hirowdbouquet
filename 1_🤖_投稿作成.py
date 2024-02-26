@@ -1,5 +1,7 @@
 import streamlit as st
 import scraping_helper as sh
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 
 st.set_page_config(
     page_icon='🤖',
@@ -18,41 +20,46 @@ with tab1:
 
     with col1:
         user_input = st.text_area("生成指示 : 作りたいプロットのイメージを入力", value="""以下の内容で台本を書いてください。\nテーマ：\n\nターゲット：\n\nその他の指示：""", height=300)
-        url = st.text_input("参考URL")
+        url = st.text_input("参考URL", value="https://shukatsu-mirai.com/archives/100625")
         submit_button = st.button('送信')
 
         if submit_button:
             if 'last_url' not in st.session_state or st.session_state['last_url'] != url:
-                st.session_state['last_url'] = url
                 index = sh.initialize_pinecone()
-                # 新しいURLの場合、全データを削除してからスクレイピング
-                sh.delete_all_data_in_namespace(index, "ns1")
+                try:
+				# ns1のデータを削除しようと試みる
+                    sh.delete_all_data_in_namespace(index, "ns1")
+                except Exception:
+            # エラーが発生しても何もせずに処理を続行する
+                    pass
+
+                st.session_state['last_url'] = url
                 scraped_data = sh.scrape_url(url)
                 combined_text, metadata_list = sh.prepare_text_and_metadata(sh.extract_keys_from_json(scraped_data))
                 chunks = sh.split_text(combined_text)
                 embeddings = sh.make_chunks_embeddings(chunks)
                 sh.store_data_in_pinecone(index, embeddings, chunks, metadata_list, "ns1")
+                time.sleep(10)
                 st.success("ウェブサイトを読み込みました！")
             else:
-                # URLが同じ場合、データ更新をスキップ
                 st.info("同じウェブサイトのデータを使用")
+
 
     with col2:
         if submit_button:
-            with st.spinner('プロットを生成中...'):
-                index = sh.initialize_pinecone()  # initialize_pineconeの呼び出しを繰り返さないように検討する
-                namespaces = ["ns1", "ns2", "ns3", "ns4", "ns5"]
-                response = sh.generate_response_with_llm_for_multiple_namespaces(index, user_input, namespaces)
-                if response:  # responseがNoneでないことを確認
-                    response_text = response.get('text')
-                    st.session_state['response_text'] = response_text  # セッション状態にresponse_textを保存
-                else:
-                    st.session_state['response_text'] = "エラー: プロットを生成できませんでした。"
+            namespaces = ["ns1", "ns2", "ns3", "ns4", "ns5"]
+            index = sh.initialize_pinecone()
+            response = sh.generate_response_with_llm_for_multiple_namespaces(index, user_input, namespaces)
+            if response:  # responseがNoneでないことを確認
+                response_text = response.get('text')
+                st.session_state['response_text'] = response_text  # セッション状態にresponse_textを保存
+            else:
+                st.session_state['response_text'] = "エラー: プロットを生成できませんでした。"
 
         # セッション状態からresponse_textを取得、存在しない場合はデフォルトのメッセージを表示
         displayed_value = st.session_state.get('response_text', "生成結果 : プロットが表示されます")
         st.text_area("生成結果", value=displayed_value, height=400)
-               
+  
 
 
 
@@ -131,6 +138,7 @@ with tab2:
             sh.delete_all_data_in_namespace(index, "ns3")
             st.success("全データが削除されました！")
 
+
     with col3:
         index = sh.initialize_pinecone()  # Pineconeを初期化
         st.subheader("競合データの登録")
@@ -151,10 +159,9 @@ with tab2:
             # チャンクの埋め込みを生成
             embeddings = sh.make_chunks_embeddings(chunks)
 
-            metadata = sh.create_metadata_for_pdf(pdf_file2.name,chunks)
 
             # Pineconeにデータを保存
-            sh.store_pdf_data_in_pinecone(index, embeddings, metadata, "ns4")
+            sh.store_pdf_data_in_pinecone(index, embeddings, pdf_file2.name, "ns4")
             st.success("データをPineconeに登録しました！")
 
         # 全データ削除ボタン
@@ -185,10 +192,9 @@ with tab2:
             # チャンクの埋め込みを生成
             embeddings = sh.make_chunks_embeddings(chunks)
 
-            metadata = sh.create_metadata_for_pdf(pdf_file3.name,chunks)
 
             # Pineconeにデータを保存
-            sh.store_pdf_data_in_pinecone(index, embeddings, metadata, "ns5")
+            sh.store_pdf_data_in_pinecone(index, embeddings, pdf_file3.name, "ns5")
             st.success("データをPineconeに登録しました！")
 
         # 全データ削除ボタン
